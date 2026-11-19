@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+html, body, #root { height: 100%; }
+body { @apply bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100; }
+
+.prose-chat p { margin: 0.35rem 0; }
+.prose-chat ul { list-style: disc; padding-left: 1.25rem; }
+.prose-chat ol { list-style: decimal; padding-left: 1.25rem; }
+.prose-chat code { @apply rounded bg-zinc-100 px-1 py-0.5 text-[0.85em] dark:bg-zinc-800; }
+.prose-chat pre { @apply my-2 overflow-x-auto rounded bg-zinc-100 p-2 text-xs dark:bg-zinc-900; }
+.prose-chat pre code { background: transparent; padding: 0; }
+.prose-chat table { @apply my-2 block overflow-x-auto text-xs; }
+.prose-chat th, .prose-chat td { @apply border border-zinc-300 px-1.5 py-0.5 dark:border-zinc-700; }
+.prose-chat a { @apply text-blue-600 underline dark:text-blue-400; }
+
+.btn { @apply rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800; }
+.btn-primary { @apply border-blue-600 bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-700; }
+.btn-danger { @apply border-red-600 bg-red-600 text-white hover:bg-red-700 dark:hover:bg-red-700; }
+.field { @apply w-full rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm outline-none focus:border-blue-500 dark:border-zinc-700; }
