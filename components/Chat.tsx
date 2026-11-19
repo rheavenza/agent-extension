@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LocalAgentTransport } from '@/lib/agent/agent';
 import { saveChat, type StoredChat } from '@/lib/chat-store';
 import { PROVIDER_LABELS, saveSettings, type ProviderId, type Settings } from '@/lib/settings';
+import ErrorBoundary from './ErrorBoundary';
 import Message from './Message';
 
 const SUGGESTIONS = [
@@ -40,7 +41,11 @@ export default function Chat({
   }, [busy, messages, chat.id]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => bottomRef.current?.scrollIntoView({ block: 'end' }), [messages]);
+  useEffect(() => {
+    // Block body on purpose: newer Chrome returns a Promise from scrollIntoView(), and React
+    // would treat any returned value as the effect's cleanup and crash calling it.
+    bottomRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages]);
 
   const [input, setInput] = useState('');
   const submit = (text = input) => {
@@ -108,7 +113,9 @@ export default function Chat({
           </div>
         )}
         {messages.map((m) => (
-          <Message key={m.id} message={m as UIMessage} onApproval={addToolApprovalResponse} />
+          <ErrorBoundary key={m.id} inline>
+            <Message message={m as UIMessage} onApproval={addToolApprovalResponse} />
+          </ErrorBoundary>
         ))}
         {status === 'submitted' && <div className="text-xs text-zinc-500">Thinking…</div>}
         {error && (
