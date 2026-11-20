@@ -23,6 +23,8 @@ export interface Settings {
   /** Point the Splunk tab at each finished job (?sid=) so you can see it. */
   splunkSyncTab: boolean;
   maxSteps: number;
+  /** Wall-clock budget per turn; when it runs out the agent must report what it has. */
+  maxMinutes: number;
   extraInstructions: string;
 }
 
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   splunkSearchTimeoutSec: 120,
   splunkSyncTab: true,
   maxSteps: 25,
+  maxMinutes: 8,
   extraInstructions: '',
 };
 

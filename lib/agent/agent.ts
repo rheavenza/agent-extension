@@ -9,15 +9,19 @@ import {
 import { createModel, providerOptions } from '../llm/providers';
 import type { Settings } from '../settings';
 import { buildTools, toolApproval } from '../tools';
+import { budgetPrepareStep } from './budget';
 import { buildSystemPrompt } from './system-prompt';
 
 export function buildAgent(s: Settings) {
+  const instructions = buildSystemPrompt(s.extraInstructions);
   return new ToolLoopAgent({
     model: createModel(s),
-    instructions: buildSystemPrompt(s.extraInstructions),
+    instructions,
     tools: buildTools(s),
     toolApproval,
     stopWhen: stepCountIs(s.maxSteps),
+    // Forces a written report on the last step or when the time budget runs out.
+    prepareStep: budgetPrepareStep({ maxSteps: s.maxSteps, maxMinutes: s.maxMinutes }, instructions),
     providerOptions: providerOptions(s),
     maxRetries: 2,
   });

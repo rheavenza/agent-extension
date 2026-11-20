@@ -13,6 +13,9 @@ const SUGGESTIONS = [
   'Which Splunk indexes can I search?',
 ];
 
+export const SUMMARIZE_PROMPT =
+  "Stop investigating. Don't run any more tools. Report what you've found so far: what you checked (with SPL and sids), what you found (or that nothing relevant turned up), what is still unknown, and what to try next.";
+
 export default function Chat({
   chat,
   settings,
@@ -34,6 +37,16 @@ export default function Chat({
   });
 
   const busy = status === 'submitted' || status === 'streaming';
+
+  // A turn that ended without any assistant text (stopped by the user, cut off, or an empty final
+  // step) leaves the user with nothing. Offer a one-click follow-up that asks for a report.
+  const last = messages[messages.length - 1];
+  const lastAssistantHasText =
+    last?.role === 'assistant' && last.parts.some((p) => p.type === 'text' && p.text.trim().length > 0);
+  const awaitingApproval =
+    last?.role === 'assistant' &&
+    last.parts.some((p) => 'state' in p && (p as { state?: string }).state === 'approval-requested');
+  const showSummarize = !busy && !!last && last.role === 'assistant' && !lastAssistantHasText && !awaitingApproval;
 
   // Save the conversation whenever a turn settles.
   useEffect(() => {
@@ -118,6 +131,14 @@ export default function Chat({
           </ErrorBoundary>
         ))}
         {status === 'submitted' && <div className="text-xs text-zinc-500">Thinking…</div>}
+        {showSummarize && (
+          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            The agent stopped without writing a report.{' '}
+            <button className="underline" onClick={() => submit(SUMMARIZE_PROMPT)}>
+              Summarize what you found
+            </button>
+          </div>
+        )}
         {error && (
           <div className="rounded border border-red-400 bg-red-50 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-200">
             <div className="font-medium">Error</div>

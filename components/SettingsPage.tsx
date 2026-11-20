@@ -194,6 +194,16 @@ export default function SettingsPage() {
             onChange={(e) => setS({ ...s, maxSteps: Math.max(3, Number(e.target.value) || 25) })}
           />
         </Row>
+        <Row label="Time budget per turn (min)" hint="When the step or time budget runs out, the agent stops searching and reports what it found so far.">
+          <input
+            className="field w-32"
+            type="number"
+            min={1}
+            max={60}
+            value={s.maxMinutes}
+            onChange={(e) => setS({ ...s, maxMinutes: Math.max(1, Number(e.target.value) || 8) })}
+          />
+        </Row>
         <Row
           label="Extra instructions"
           hint="Your environment's conventions, e.g. “App logs are in index=app_prod, sourcetype=app:json; the host is in field host; ServiceNow cmdb_ci equals the Splunk host.”"
