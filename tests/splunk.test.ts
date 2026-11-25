@@ -5,7 +5,9 @@ import {
   normalizeSplunkTime,
   parseSplunkUrl,
   riskySplCommands,
+  splApprovalReasons,
   splCommands,
+  splMacros,
 } from '../lib/splunk/spl';
 
 describe('SPL guard', () => {
@@ -26,6 +28,35 @@ describe('SPL guard', () => {
     ['index=app | collect index=summary | sendemail to=x@y', ['collect', 'sendemail']],
   ])('%s', (spl, risky) => {
     expect(riskySplCommands(spl)).toEqual(risky);
+  });
+});
+
+describe('SPL macros and saved searches', () => {
+  it('finds macros with and without arguments', () => {
+    expect(splMacros('`cim_auth` action=failure | `drop_dm(foo, bar)` | `noargs()`')).toEqual([
+      'cim_auth',
+      'drop_dm(2)',
+      'noargs(0)',
+    ]);
+    expect(splMacros('index=app error | stats count')).toEqual([]);
+  });
+
+  it('asks for approval on untrusted macros and savedsearch', () => {
+    expect(splApprovalReasons('index=app | stats count by host')).toEqual([]);
+    expect(splApprovalReasons('index=app | `write_it`')[0]).toMatch(/macros.*`write_it`/);
+    expect(splApprovalReasons('| savedsearch "Nightly cleanup"')[0]).toMatch(/savedsearch/);
+    expect(splApprovalReasons('| runshellscript x.sh')[0]).toMatch(/runshellscript/);
+  });
+
+  it('lets trusted macros through, by name or name(arity)', () => {
+    expect(splApprovalReasons('`CIM_Auth` | stats count', ['cim_auth'])).toEqual([]);
+    expect(splApprovalReasons('`m(a,b)` | stats count', ['m(2)'])).toEqual([]);
+    expect(splApprovalReasons('`m(a,b)` | stats count', ['m'])).toEqual([]);
+    expect(splApprovalReasons('`m(a)` | stats count', ['m(2)'])).toHaveLength(1);
+  });
+
+  it('reports both a risky command and an untrusted macro', () => {
+    expect(splApprovalReasons('`x` | outputlookup y.csv')).toHaveLength(2);
   });
 });
 

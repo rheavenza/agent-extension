@@ -1,6 +1,7 @@
 import type { ChatAddToolApproveResponseFunction, UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { safeLinkUrl } from '@/lib/markdown';
 import ToolCard, { type ToolPartLike } from './ToolCard';
 
 export default function Message({
@@ -28,7 +29,13 @@ export default function Message({
               <div key={i} className="prose-chat break-words">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
-                  components={{ a: (props) => <a {...props} target="_blank" rel="noreferrer" /> }}
+                  urlTransform={safeLinkUrl}
+                  components={{
+                    a: ({ node: _node, ...props }) =>
+                      props.href ? <a {...props} target="_blank" rel="noreferrer noopener" /> : <span>{props.children}</span>,
+                    // Never fetch images from model output: rendering one is a zero-click exfiltration channel.
+                    img: ({ alt }) => <span className="text-zinc-500">[image removed{alt ? `: ${alt}` : ''}]</span>,
+                  }}
                 >
                   {part.text}
                 </ReactMarkdown>

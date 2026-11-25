@@ -18,6 +18,8 @@ export interface Settings {
   servicenowPatterns: string[];
   splunkPatterns: string[];
   splunkDefaultApp: string;
+  /** Search macros that may run without approval, e.g. "cim_Authentication_indexes" or "my_macro(2)". */
+  splunkTrustedMacros: string[];
   splunkMaxResults: number;
   splunkSearchTimeoutSec: number;
   /** Point the Splunk tab at each finished job (?sid=) so you can see it. */
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   servicenowPatterns: ['https://*.service-now.com/*'],
   splunkPatterns: ['https://*.splunkcloud.com/*'],
   splunkDefaultApp: 'search',
+  splunkTrustedMacros: [],
   splunkMaxResults: 50,
   splunkSearchTimeoutSec: 120,
   splunkSyncTab: true,

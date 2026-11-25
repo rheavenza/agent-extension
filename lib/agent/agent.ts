@@ -8,20 +8,28 @@ import {
 } from 'ai';
 import { createModel, providerOptions } from '../llm/providers';
 import type { Settings } from '../settings';
-import { buildTools, toolApproval } from '../tools';
+import { buildToolApproval, buildTools } from '../tools';
 import { budgetPrepareStep } from './budget';
+import { pruneToolResults } from './context';
 import { buildSystemPrompt } from './system-prompt';
 
 export function buildAgent(s: Settings) {
   const instructions = buildSystemPrompt(s.extraInstructions);
+  const tools = buildTools(s);
+  const budget = budgetPrepareStep<typeof tools>({ maxSteps: s.maxSteps, maxMinutes: s.maxMinutes }, instructions);
   return new ToolLoopAgent({
     model: createModel(s),
     instructions,
-    tools: buildTools(s),
-    toolApproval,
+    tools,
+    toolApproval: buildToolApproval(s),
     stopWhen: stepCountIs(s.maxSteps),
-    // Forces a written report on the last step or when the time budget runs out.
-    prepareStep: budgetPrepareStep({ maxSteps: s.maxSteps, maxMinutes: s.maxMinutes }, instructions),
+    prepareStep: async (opts) => {
+      // Forces a written report on the last step or when the time budget runs out.
+      const step = await budget(opts);
+      // Trims older large tool results from what the model sees; the chat keeps them in full.
+      const messages = pruneToolResults(opts.messages);
+      return messages === opts.messages ? step : { ...step, messages };
+    },
     providerOptions: providerOptions(s),
     maxRetries: 2,
   });
