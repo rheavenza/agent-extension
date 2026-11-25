@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { runSearch, sleep, type SplunkTarget } from '../lib/splunk/client';
+import { resetAgentTab, runSearch, showJobInTab, sleep, type SplunkTarget } from '../lib/splunk/client';
 
 const target: SplunkTarget = { tabId: 7, origin: 'https://splunk.test', base: '/en-US', app: 'search' };
 
@@ -91,5 +91,59 @@ describe('sleep', () => {
     const ac = new AbortController();
     ac.abort();
     await expect(sleep(10_000, ac.signal)).rejects.toThrow(/Abort/);
+  });
+});
+
+describe('showJobInTab', () => {
+  function fakeTabs(initial: Array<{ id: number; url: string; windowId?: number; index?: number }>) {
+    const tabs = new Map(initial.map((t) => [t.id, { windowId: 1, index: 0, ...t }]));
+    const updates: Array<[number, string]> = [];
+    const creates: any[] = [];
+    let nextId = 100;
+    (globalThis as any).chrome = {
+      storage: { session: { get: async () => ({}), set: async () => {} } },
+      tabs: {
+        get: async (id: number) => {
+          const t = tabs.get(id);
+          if (!t) throw new Error('No tab');
+          return t;
+        },
+        update: async (id: number, { url }: { url: string }) => {
+          updates.push([id, url]);
+          tabs.get(id)!.url = url;
+        },
+        create: async (o: any) => {
+          creates.push(o);
+          const t = { id: nextId++, url: o.url, windowId: o.windowId ?? 1, index: o.index ?? 0 };
+          tabs.set(t.id, t);
+          return t;
+        },
+      },
+    };
+    return { tabs, updates, creates };
+  }
+
+  it("opens one background tab next to the user's tab and reuses it, never navigating the user's tab", async () => {
+    resetAgentTab();
+    const f = fakeTabs([{ id: 7, url: 'https://splunk.test/en-US/app/search/search?q=draft', index: 3 }]);
+    const first = await showJobInTab(target, 'https://splunk.test/en-US/app/search/search?sid=a');
+    const second = await showJobInTab(target, 'https://splunk.test/en-US/app/search/search?sid=b');
+    expect(f.creates).toEqual([
+      { url: 'https://splunk.test/en-US/app/search/search?sid=a', active: false, windowId: 1, index: 4, openerTabId: 7 },
+    ]);
+    expect(first).toBe(100);
+    expect(second).toBe(100);
+    expect(f.updates).toEqual([[100, 'https://splunk.test/en-US/app/search/search?sid=b']]);
+    expect(f.tabs.get(7)!.url).toContain('q=draft');
+  });
+
+  it('opens a new tab when the agent tab was closed', async () => {
+    resetAgentTab();
+    const f = fakeTabs([{ id: 7, url: 'https://splunk.test/' }]);
+    await showJobInTab(target, 'https://splunk.test/x?sid=a');
+    f.tabs.delete(100);
+    const id = await showJobInTab(target, 'https://splunk.test/x?sid=b');
+    expect(id).toBe(101);
+    expect(f.creates).toHaveLength(2);
   });
 });

@@ -200,7 +200,7 @@ export default function SettingsPage() {
         </Row>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={s.splunkSyncTab} onChange={(e) => setS({ ...s, splunkSyncTab: e.target.checked })} />
-          Show each finished search in my Splunk tab (navigates it to the job's sid)
+          Show each finished search in a Splunk tab the agent opens in the background (your own tabs are never navigated)
         </label>
       </section>
 

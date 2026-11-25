@@ -1,6 +1,7 @@
 import { snowFetchInPage } from '../injected';
 import { runInTab } from '../tabs';
-import { compactJournal, compactRecord } from './record';
+import { compactJournal, compactRecord, type JournalEntry } from './record';
+import { isTicketNumber } from './url';
 
 async function call(tabId: number, path: string, method = 'GET', body?: unknown) {
   const res = await runInTab(tabId, snowFetchInPage, [path, method, body ? JSON.stringify(body) : null], 'MAIN');
@@ -35,7 +36,13 @@ export async function getRecord(
   let table = opts.table ?? 'task';
   let query: string;
   if (opts.sysId) query = `sys_id=${opts.sysId}`;
-  else if (opts.number) query = `number=${opts.number.trim().toUpperCase()}`;
+  else if (opts.number) {
+    // The number goes into an encoded query, where ^ starts a new condition. Only accept real numbers.
+    if (!isTicketNumber(opts.number)) {
+      throw new Error(`"${opts.number}" doesn't look like a ticket number (letters followed by digits, e.g. INC0012345).`);
+    }
+    query = `number=${opts.number.trim().toUpperCase()}`;
+  }
   else throw new Error('getRecord needs a sysId or a number');
 
   const fetchOne = async (t: string) => {
@@ -63,15 +70,24 @@ export async function getRecord(
   return { table, sysId: String(rec.sys_id?.value ?? rec.sys_id), record: compactRecord(rec) };
 }
 
-export async function getJournal(tabId: number, sysId: string, limit = 30) {
+export type JournalResult = JournalEntry[] | { unavailable: string };
+
+/**
+ * The journal (comments and work notes) is often ACL-restricted. Say so instead of returning null,
+ * so the model can tell "no entries" from "couldn't read them".
+ */
+export async function getJournal(tabId: number, sysId: string, limit = 30): Promise<JournalResult> {
   try {
     const j = await call(
       tabId,
       `/api/now/table/sys_journal_field?sysparm_query=${enc(`element_id=${sysId}^ORDERBYDESCsys_created_on`)}&sysparm_fields=element,value,sys_created_on,sys_created_by&sysparm_limit=${limit}`,
     );
     return compactJournal(j.result ?? []);
-  } catch {
-    return null; // Often ACL-restricted. The record's comments/work_notes display values still hold the history.
+  } catch (e) {
+    const msg = e instanceof Error ? e.message.split('.')[0] : String(e);
+    return {
+      unavailable: `Couldn't read the journal (${msg}). The record's comments and work_notes fields still hold the history; if those are empty too, use read_page_text on the ticket tab.`,
+    };
   }
 }
 

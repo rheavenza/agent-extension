@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { pageTextInPage } from '../injected';
 import { addWorkNote, getJournal, getRecord, queryRecords } from '../servicenow/client';
+import { extractIndicators, suggestedWindow } from '../servicenow/indicators';
 import { numberToTable, parseSnowRecordUrl } from '../servicenow/url';
 import type { Settings } from '../settings';
 import { getResults, runSearch, showJobInTab, splunkTargetFromTab } from '../splunk/client';
@@ -36,7 +37,8 @@ export function buildTools(s: Settings) {
     read_servicenow_ticket: tool({
       description:
         'Read a ServiceNow ticket (incident, RITM, change, problem, sc_task, ...) through the REST API using the user\'s session in an open ServiceNow tab. ' +
-        'With no number, it reads the record currently open in the ServiceNow tab. Returns the fields as display values (date fields also include their raw UTC value) plus the journal (comments/work notes) when accessible.',
+        'With no number, it reads the record currently open in the ServiceNow tab. Returns the fields as display values (date fields also include their raw UTC value), the journal (comments/work notes) when accessible, ' +
+        '`indicators` extracted from the text (hosts, IPs, URLs, IDs, error codes, exceptions, timestamps as written), and `suggested_window`: a default Splunk time range around opened_at, as epoch seconds.',
       inputSchema: z.object({
         number: z.string().optional().describe('Ticket number, e.g. INC0012345 or RITM0001234'),
         tabId: tabIdSchema,
@@ -53,7 +55,16 @@ export function buildTools(s: Settings) {
             `The ServiceNow tab (${tab.url}) is not on a record form. Pass a ticket number, or use read_page_text on tab ${tab.id}.`,
           );
         const journal = includeJournal ? await getJournal(tab.id!, res.sysId) : null;
-        return { tabId: tab.id, table: res.table, sys_id: res.sysId, fields: res.record, journal };
+        const own = tab.url ? [new URL(tab.url).hostname] : [];
+        return {
+          tabId: tab.id,
+          table: res.table,
+          sys_id: res.sysId,
+          fields: res.record,
+          journal,
+          indicators: extractIndicators(res.record, Array.isArray(journal) ? journal : null, own),
+          suggested_window: suggestedWindow(res.record),
+        };
       },
     }),
 
@@ -119,8 +130,8 @@ export function buildTools(s: Settings) {
           timeoutSec: s.splunkSearchTimeoutSec,
           signal: abortSignal,
         });
-        if (s.splunkSyncTab) await showJobInTab(target, res.viewUrl).catch(() => undefined);
-        return { tabId: tab.id, ...res };
+        const shownInTab = s.splunkSyncTab ? await showJobInTab(target, res.viewUrl).catch(() => undefined) : undefined;
+        return { tabId: tab.id, ...(shownInTab != null ? { shownInTab } : {}), ...res };
       },
     }),
 
