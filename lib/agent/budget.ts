@@ -13,6 +13,18 @@ You are close to your step or time budget for this turn. Stop widening the searc
 export interface Budget {
   maxSteps: number;
   maxMinutes: number;
+  /**
+   * Steps and agent time already spent earlier in this turn. A turn that pauses for a tool approval
+   * resumes as a new request; without these it would get a fresh budget after every approval.
+   * Time spent waiting for the user to approve is not counted.
+   */
+  stepsUsed?: number;
+  msUsed?: number;
+}
+
+/** Steps this request may still take (at least 1, which is then the forced report). */
+export function remainingSteps(b: Budget): number {
+  return Math.max(1, b.maxSteps - (b.stepsUsed ?? 0));
 }
 
 /**
@@ -32,8 +44,8 @@ export function budgetPrepareStep<T extends ToolSet>(
   const start = now();
   const timeMs = budget.maxMinutes * 60_000;
   return ({ stepNumber }) => {
-    const elapsed = now() - start;
-    const stepsLeft = budget.maxSteps - stepNumber; // includes this step
+    const elapsed = (budget.msUsed ?? 0) + now() - start;
+    const stepsLeft = remainingSteps(budget) - stepNumber; // includes this step
     if (stepsLeft <= 1 || elapsed >= timeMs) {
       return { toolChoice: 'none', instructions: `${base}\n\n${WRAP_UP_NOTE}` };
     }
