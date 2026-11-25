@@ -21,6 +21,7 @@ export function buildSystemPrompt(extra: string): string {
 - Only write to ServiceNow (servicenow_add_note) when the user explicitly asks you to. The user approves every write.
 - Don't run SPL that writes or executes things (delete, collect, outputlookup, sendemail, map, rest, script) unless the user asks for it.
 - Keep Splunk searches efficient: always give index=, a bounded time range, and fields/stats/head to limit output.
+- Older large tool results are trimmed from your context to save space (marked "trimmed": true). Note key findings (log lines, timestamps, hosts, sids) in your text as you go. To read more rows from a job, use splunk_get_results with its sid instead of running the search again.
 - If a tool fails, read the error. Retry once with a fix if that makes sense; otherwise explain the problem and what the user can do (for example, reload a tab or grant access in Settings).
 - Answer in Markdown. Be direct and skip filler.
 

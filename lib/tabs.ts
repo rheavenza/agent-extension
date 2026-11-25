@@ -23,6 +23,24 @@ export async function listTabs(s: Settings) {
     }));
 }
 
+export type ListedTab = Awaited<ReturnType<typeof listTabs>>[number];
+
+/**
+ * What the model gets from list_tabs: ServiceNow and Splunk tabs, plus the tab the user is looking
+ * at right now (so "read this page" still works). Titles and URLs of every other tab (mail, HR,
+ * banking, ...) stay out of the prompt, which goes to a third-party API; only their count is shared.
+ */
+export function tabsForAgent(tabs: ListedTab[], focusedTabId: number | undefined) {
+  const shown = tabs.filter((t) => t.kind !== 'other' || t.tabId === focusedTabId);
+  return {
+    tabs: shown.map(({ lastAccessed: _drop, ...t }) => ({
+      ...t,
+      ...(t.tabId === focusedTabId ? { focused: true } : {}),
+    })),
+    otherTabsHidden: tabs.length - shown.length,
+  };
+}
+
 /** Use the given tab, otherwise the active tab of this kind, otherwise the most recently used one. */
 export async function resolveTab(s: Settings, kind: Exclude<TabKind, 'other'>, tabId?: number): Promise<chrome.tabs.Tab> {
   if (tabId != null) {

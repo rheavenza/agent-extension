@@ -24,17 +24,22 @@ For development, `pnpm dev` launches Chromium with hot reload (it needs Chrome o
 
 | Tool | What it does | Approval |
 |---|---|---|
-| `list_tabs` | Lists open tabs, labeled servicenow / splunk / other | – |
+| `list_tabs` | Lists the open ServiceNow and Splunk tabs plus the tab you're looking at. Other tabs are only counted, so their titles and URLs never reach the model provider. | – |
 | `read_servicenow_ticket` | Reads the record open in the ServiceNow tab, or one you name by number, via `/api/now/table` with your session token (`g_ck`). Includes the journal. | – |
 | `servicenow_query` | Runs an encoded query, e.g. tickets you opened | – |
 | `servicenow_add_note` | Adds a work note or comment | **always** |
-| `splunk_search` | Runs SPL through Splunk Web's `splunkd/__raw` proxy with your session and CSRF cookie, polls the job, and returns capped results. It then points your Splunk tab at `?sid=<job>` so you see the same search. | only for `delete`, `collect`, `outputlookup`, `sendemail`, `map`, `rest`, `script`, … |
+| `splunk_search` | Runs SPL through Splunk Web's `splunkd/__raw` proxy with your session and CSRF cookie, polls the job, and returns capped results. It then points your Splunk tab at `?sid=<job>` so you see the same search. | only for `delete`, `collect`, `outputlookup`, `sendemail`, `map`, `rest`, `script`, `savedsearch`, …, and for macros not listed under **Settings → Trusted Splunk macros** |
+| `splunk_get_results` | Reads more rows from a job by sid (paging, specific fields) without running the search again | – |
 | `splunk_metadata` | Lists indexes, sourcetypes, hosts or sources | – |
 | `read_page_text` | Reads the visible text of any tab (shadow DOM and iframes included). Fallback when the APIs are blocked by ACLs. | – |
 
 Each request is injected into your tab with `chrome.scripting.executeScript` and runs with that page's origin, so the browser attaches your cookies itself.
 
-Ticket text and log events are treated as untrusted. The system prompt tells the model to ignore instructions found in them, and every write needs your approval.
+Searches that time out are finalized (Splunk stops and keeps what it found), searches you stop are cancelled, and every job is created with `auto_cancel` so a closed panel doesn't leave it running against your search quota.
+
+To keep long investigations within the context window, one Splunk result is capped at about 40k characters, and only the three most recent large results stay in full in what the model sees. Older ones are cut to their metadata and a few sample rows. The chat keeps every result in full.
+
+Ticket text and log events are treated as untrusted. The system prompt tells the model to ignore instructions found in them, and every write needs your approval. Images in the model's replies are never rendered, so injected text can't leak data through an image URL, and only http(s) links are kept.
 
 **Tip:** put your environment's conventions in **Settings → Extra instructions**, for example: "app logs: `index=app_prod sourcetype=app:json`; ServiceNow `cmdb_ci` equals the Splunk `host`". This is the biggest single improvement to search quality.
 

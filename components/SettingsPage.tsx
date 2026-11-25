@@ -31,6 +31,7 @@ export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [snowText, setSnowText] = useState('');
   const [splunkText, setSplunkText] = useState('');
+  const [macrosText, setMacrosText] = useState('');
   const [status, setStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const [granted, setGranted] = useState<Record<string, boolean>>({});
 
@@ -51,6 +52,7 @@ export default function SettingsPage() {
       setS(cfg);
       setSnowText(cfg.servicenowPatterns.join('\n'));
       setSplunkText(cfg.splunkPatterns.join('\n'));
+      setMacrosText((cfg.splunkTrustedMacros ?? []).join('\n'));
       refreshGrants(cfg);
     });
   }, []);
@@ -62,7 +64,15 @@ export default function SettingsPage() {
     setS({ ...s, providers: { ...s.providers, [s.provider]: { ...p, ...patch } } });
 
   const save = async () => {
-    const next: Settings = { ...s, servicenowPatterns: lines(snowText), splunkPatterns: lines(splunkText) };
+    const next: Settings = {
+      ...s,
+      servicenowPatterns: lines(snowText),
+      splunkPatterns: lines(splunkText),
+      splunkTrustedMacros: macrosText
+        .split('\n')
+        .map((l) => l.trim().replace(/^`|`$/g, ''))
+        .filter(Boolean),
+    };
     // Must run inside the click handler (user gesture) for Chrome to show the permission prompt.
     const origins = requiredOrigins(next);
     let ok = true;
@@ -176,6 +186,18 @@ export default function SettingsPage() {
             />
           </Row>
         </div>
+        <Row
+          label="Trusted Splunk macros"
+          hint="One per line. Searches that use any other macro need your approval, because a macro can expand to commands that write data. Use the name, or name(n) for a macro with n arguments."
+        >
+          <textarea
+            className="field font-mono"
+            rows={3}
+            value={macrosText}
+            onChange={(e) => setMacrosText(e.target.value)}
+            placeholder="cim_Authentication_indexes"
+          />
+        </Row>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={s.splunkSyncTab} onChange={(e) => setS({ ...s, splunkSyncTab: e.target.checked })} />
           Show each finished search in my Splunk tab (navigates it to the job's sid)

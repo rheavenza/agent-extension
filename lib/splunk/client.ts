@@ -1,6 +1,6 @@
 import { splunkFetchInPage } from '../injected';
 import { runInTab } from '../tabs';
-import { compactResults, normalizeSpl, normalizeSplunkTime, parseSplunkUrl } from './spl';
+import { compactResults, fitRowsToBudget, normalizeSpl, normalizeSplunkTime, parseSplunkUrl } from './spl';
 
 export interface SplunkTarget {
   tabId: number;
@@ -38,14 +38,27 @@ async function call(t: SplunkTarget, path: string, method = 'GET', form?: Record
   return json;
 }
 
-const sleep = (ms: number, signal?: AbortSignal) =>
+const abortError = () => new DOMException('Aborted', 'AbortError');
+
+/** Abortable sleep that cleans up its listener either way. */
+export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const id = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    if (signal?.aborted) return reject(abortError());
+    const onAbort = () => {
       clearTimeout(id);
-      reject(new Error('Aborted'));
-    });
+      reject(abortError());
+    };
+    const id = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
+
+/** cancel: stop and delete the job. finalize: stop it and keep the results found so far. */
+export async function controlJob(t: SplunkTarget, sid: string, action: 'cancel' | 'finalize') {
+  await call(t, `search/jobs/${encodeURIComponent(sid)}/control`, 'POST', { action, output_mode: 'json' });
+}
 
 export interface SearchOptions {
   spl: string;
@@ -56,10 +69,14 @@ export interface SearchOptions {
   signal?: AbortSignal;
 }
 
+/** Seconds of no polling after which Splunk cancels an unfinished job (covers a closed side panel). */
+export const JOB_AUTO_CANCEL_SEC = 90;
+
 export async function runSearch(t: SplunkTarget, o: SearchOptions) {
   const search = normalizeSpl(o.spl);
   const earliest = normalizeSplunkTime(o.earliest) ?? '-24h';
   const latest = normalizeSplunkTime(o.latest) ?? 'now';
+  if (o.signal?.aborted) throw abortError();
   const created = await call(t, 'search/jobs', 'POST', {
     search,
     earliest_time: earliest,
@@ -67,37 +84,72 @@ export async function runSearch(t: SplunkTarget, o: SearchOptions) {
     output_mode: 'json',
     exec_mode: 'normal',
     namespace: t.app,
+    // Running jobs count against the user's concurrent-search quota. If we stop polling
+    // (side panel closed, extension reloaded), let Splunk cancel the job on its own.
+    auto_cancel: String(JOB_AUTO_CANCEL_SEC),
   });
   const sid: string = created.sid;
   if (!sid) throw new Error('Splunk did not return a search id (sid)');
 
-  const deadline = Date.now() + o.timeoutSec * 1000;
-  let content: any = {};
-  let delay = 500;
-  while (true) {
+  const poll = async () => {
     const j = await call(t, `search/jobs/${encodeURIComponent(sid)}?output_mode=json`);
-    content = j.entry?.[0]?.content ?? {};
-    if (content.isDone || content.isFailed || content.dispatchState === 'FAILED') break;
-    if (Date.now() > deadline) break;
-    await sleep(delay, o.signal);
-    delay = Math.min(delay * 1.5, 3000);
+    return (j.entry?.[0]?.content ?? {}) as any;
+  };
+  const settled = (c: any) => c.isDone || c.isFailed || c.dispatchState === 'FAILED';
+
+  let content: any = {};
+  let finalized = false;
+  try {
+    const deadline = Date.now() + o.timeoutSec * 1000;
+    let delay = 500;
+    while (true) {
+      content = await poll();
+      if (settled(content)) break;
+      if (Date.now() > deadline) {
+        // Stop the job instead of leaving it running, and keep what it found so far.
+        await controlJob(t, sid, 'finalize').catch(() => undefined);
+        finalized = true;
+        for (let i = 0; i < 10 && !settled(content); i++) {
+          await sleep(500, o.signal);
+          content = await poll();
+        }
+        break;
+      }
+      await sleep(delay, o.signal);
+      delay = Math.min(delay * 1.5, 3000);
+    }
+  } catch (e) {
+    // Aborted by the user, or polling failed: don't leave the job running.
+    controlJob(t, sid, 'cancel').catch(() => undefined);
+    throw e;
   }
-  const partial = !content.isDone;
+
+  const partial = !content.isDone || finalized || !!content.isFinalized;
   const jobMessages = Object.entries(content.messages ?? {}).flatMap(([type, msgs]) =>
     (Array.isArray(msgs) ? msgs : [msgs]).map((m) => `${type}: ${m}`),
   );
   if (content.isFailed || content.dispatchState === 'FAILED') {
     throw new Error(`Splunk search failed (sid ${sid}): ${jobMessages.join('; ') || 'unknown error'}`);
   }
+  if (finalized) {
+    jobMessages.unshift(
+      `WARN: the search hit the ${o.timeoutSec}s timeout and was finalized; results cover only the part of the time range scanned so far. Narrow the search (index, host, terms, time range) rather than retrying it as is.`,
+    );
+  }
 
-  const endpoint = partial ? 'results_preview' : 'results';
+  const endpoint = content.isDone ? 'results' : 'results_preview';
   const r = await call(
     t,
     `search/jobs/${encodeURIComponent(sid)}/${endpoint}?output_mode=json&count=${o.maxResults}`,
   );
   const rows: Array<Record<string, unknown>> = r.results ?? [];
-  const results = compactResults(rows, o.maxResults);
+  const { rows: results, droppedForSize } = fitRowsToBudget(compactResults(rows, o.maxResults));
   const resultCount = Number(content.resultCount ?? rows.length);
+  if (droppedForSize > 0) {
+    jobMessages.push(
+      `INFO: ${droppedForSize} more rows were fetched but left out to stay within the size budget. Use stats/table/fields to return fewer or smaller rows, or splunk_get_results with an offset to page.`,
+    );
+  }
 
   return {
     sid,
@@ -105,16 +157,51 @@ export async function runSearch(t: SplunkTarget, o: SearchOptions) {
     earliest,
     latest,
     partial,
+    finalized,
     dispatchState: content.dispatchState as string | undefined,
     resultCount,
     eventCount: Number(content.eventCount ?? 0),
     scanCount: Number(content.scanCount ?? 0),
     returned: results.length,
     truncated: resultCount > results.length,
-    fields: (r.fields ?? []).map((f: any) => (typeof f === 'string' ? f : f.name)).filter((n: string) => !n.startsWith('_') || n === '_time' || n === '_raw'),
+    fields: fieldNames(r.fields),
     messages: [...jobMessages, ...(r.messages ?? []).map((m: any) => `${m.type}: ${m.text}`)],
     results,
     viewUrl: `${t.origin}${t.base}/app/${encodeURIComponent(t.app)}/search?sid=${encodeURIComponent(sid)}`,
+  };
+}
+
+function fieldNames(fields: unknown): string[] {
+  return ((fields as any[]) ?? [])
+    .map((f: any) => (typeof f === 'string' ? f : f.name))
+    .filter((n: string) => !n.startsWith('_') || n === '_time' || n === '_raw');
+}
+
+/** Read more rows from an existing job without running the search again. */
+export async function getResults(
+  t: SplunkTarget,
+  o: { sid: string; offset: number; count: number; fields?: string[] },
+) {
+  const job = await call(t, `search/jobs/${encodeURIComponent(o.sid)}?output_mode=json`);
+  const content = job.entry?.[0]?.content ?? {};
+  const endpoint = content.isDone ? 'results' : 'results_preview';
+  const fieldParams = (o.fields ?? []).map((f) => `&f=${encodeURIComponent(f)}`).join('');
+  const r = await call(
+    t,
+    `search/jobs/${encodeURIComponent(o.sid)}/${endpoint}?output_mode=json&offset=${o.offset}&count=${o.count}${fieldParams}`,
+  );
+  const { rows: results, droppedForSize } = fitRowsToBudget(compactResults(r.results ?? [], o.count));
+  const resultCount = Number(content.resultCount ?? 0);
+  return {
+    sid: o.sid,
+    offset: o.offset,
+    returned: results.length,
+    resultCount,
+    nextOffset: o.offset + results.length < resultCount ? o.offset + results.length : null,
+    droppedForSize,
+    fields: fieldNames(r.fields),
+    messages: (r.messages ?? []).map((m: any) => `${m.type}: ${m.text}`),
+    results,
   };
 }
 

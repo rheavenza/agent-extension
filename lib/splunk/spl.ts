@@ -17,6 +17,9 @@ export const RISKY_SPL_COMMANDS = new Set([
   'dbxoutput',
   'dbxquery',
   'sendtelemetry',
+  'runshellscript',
+  // Runs a saved search whose SPL is stored server-side and can contain any of the commands above.
+  'savedsearch',
 ]);
 
 /** Split SPL on pipes and subsearch brackets, ignoring anything inside quotes. */
@@ -53,6 +56,45 @@ export function splCommands(spl: string): string[] {
 
 export function riskySplCommands(spl: string): string[] {
   return [...new Set(splCommands(spl).filter((c) => RISKY_SPL_COMMANDS.has(c)))];
+}
+
+/**
+ * Search macros used in the SPL, e.g. `my_macro` or `my_macro(a, b)` → "my_macro" / "my_macro(2)".
+ * Macros expand server-side into arbitrary SPL (including outputlookup, collect, ...), and the
+ * command scan above can't see inside them. Backticks are matched anywhere, even inside quotes,
+ * so this errs toward asking.
+ */
+export function splMacros(spl: string): string[] {
+  const out = new Set<string>();
+  for (const m of spl.matchAll(/`\s*([A-Za-z0-9_][\w:.\-]*)\s*(\(([^`]*)\))?\s*`/g)) {
+    const name = m[1].toLowerCase();
+    if (m[2] == null) out.add(name);
+    else {
+      const args = m[3].trim();
+      out.add(`${name}(${args ? args.split(',').length : 0})`);
+    }
+  }
+  return [...out];
+}
+
+const macroBase = (m: string) => m.replace(/\(\d+\)$/, '').toLowerCase();
+
+/**
+ * Why a search needs user approval, or [] if it doesn't.
+ * `trustedMacros` entries match by name, with or without the arity: "cim_auth_indexes", "my_macro(2)".
+ */
+export function splApprovalReasons(spl: string, trustedMacros: string[] = []): string[] {
+  const reasons: string[] = [];
+  const risky = riskySplCommands(spl);
+  if (risky.length) reasons.push(`SPL uses write/exec commands: ${risky.join(', ')}`);
+  const trusted = new Set(trustedMacros.map((t) => t.trim().toLowerCase()).filter(Boolean));
+  const untrusted = splMacros(spl).filter((m) => !trusted.has(m) && !trusted.has(macroBase(m)));
+  if (untrusted.length) {
+    reasons.push(
+      `SPL uses macros that expand server-side and can't be checked: ${untrusted.map((m) => `\`${m}\``).join(', ')} (add trusted macros in Settings)`,
+    );
+  }
+  return reasons;
 }
 
 /** The REST API needs a leading `search` unless the query starts with a generating command. */
@@ -139,4 +181,23 @@ export function compactResults(
     }
     return out;
   });
+}
+
+/** Upper bound for the rows of one Splunk tool result, in characters of JSON (about 10k tokens). */
+export const RESULT_CHAR_BUDGET = 40_000;
+
+/**
+ * Keep whole rows, in order, until the JSON size budget is used up. A per-field cap alone still
+ * lets 50 rows of long _raw events reach ~100k characters in one call.
+ */
+export function fitRowsToBudget<T>(rows: T[], maxChars = RESULT_CHAR_BUDGET): { rows: T[]; droppedForSize: number } {
+  let used = 2;
+  let n = 0;
+  for (const row of rows) {
+    const size = JSON.stringify(row).length + 1;
+    if (used + size > maxChars && n > 0) break;
+    used += size;
+    n++;
+  }
+  return { rows: rows.slice(0, n), droppedForSize: rows.length - n };
 }

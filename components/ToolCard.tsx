@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   servicenow_add_note: 'Add ServiceNow note',
   splunk_search: 'Splunk search',
   splunk_metadata: 'Splunk metadata',
+  splunk_get_results: 'Splunk results',
 };
 
 function summary(name: string, input: any): string {
@@ -36,6 +37,7 @@ function summary(name: string, input: any): string {
   if (name === 'servicenow_add_note') return `${input.field ?? 'work_notes'} on ${input.table}`;
   if (name === 'splunk_metadata') return `${input.kind}${input.index ? ` (${input.index})` : ''}`;
   if (name === 'read_page_text') return `tab ${input.tabId}`;
+  if (name === 'splunk_get_results') return `${input.sid} @${input.offset ?? 0}`;
   return '';
 }
 
