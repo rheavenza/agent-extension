@@ -205,7 +205,54 @@ export async function getResults(
   };
 }
 
-/** Point the user's Splunk tab at the finished job so they can see the same results. */
-export async function showJobInTab(t: SplunkTarget, viewUrl: string) {
-  await chrome.tabs.update(t.tabId, { url: viewUrl });
+const AGENT_TAB_KEY = 'splunk:agentTabId';
+let agentTabCache: number | undefined;
+
+async function getAgentTabId(): Promise<number | undefined> {
+  if (agentTabCache != null) return agentTabCache;
+  try {
+    const r = await chrome.storage?.session?.get(AGENT_TAB_KEY);
+    agentTabCache = (r?.[AGENT_TAB_KEY] as number | undefined) ?? undefined;
+  } catch {
+    /* session storage unavailable */
+  }
+  return agentTabCache;
+}
+
+async function setAgentTabId(id: number | undefined) {
+  agentTabCache = id;
+  try {
+    await chrome.storage?.session?.set({ [AGENT_TAB_KEY]: id ?? null });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** For tests. */
+export function resetAgentTab() {
+  agentTabCache = undefined;
+}
+
+/**
+ * Show a finished job in a Splunk tab the agent owns, so the user can see the same results.
+ * The user's own Splunk tabs are never navigated: that would throw away a search they were
+ * writing. The agent tab opens once, in the background next to the user's tab, and is reused.
+ */
+export async function showJobInTab(t: SplunkTarget, viewUrl: string): Promise<number | undefined> {
+  const existing = await getAgentTabId();
+  if (existing != null) {
+    const tab = await chrome.tabs.get(existing).catch(() => undefined);
+    if (tab?.url && new URL(tab.url).origin === t.origin) {
+      await chrome.tabs.update(existing, { url: viewUrl });
+      return existing;
+    }
+  }
+  const userTab = await chrome.tabs.get(t.tabId).catch(() => undefined);
+  const created = await chrome.tabs.create({
+    url: viewUrl,
+    active: false,
+    ...(userTab ? { windowId: userTab.windowId, index: userTab.index + 1, openerTabId: userTab.id } : {}),
+  });
+  await setAgentTabId(created.id);
+  return created.id;
 }

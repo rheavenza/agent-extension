@@ -22,7 +22,7 @@ export interface Settings {
   splunkTrustedMacros: string[];
   splunkMaxResults: number;
   splunkSearchTimeoutSec: number;
-  /** Point the Splunk tab at each finished job (?sid=) so you can see it. */
+  /** Show each finished job (?sid=) in a background Splunk tab the agent owns, so you can see it. */
   splunkSyncTab: boolean;
   maxSteps: number;
   /** Wall-clock budget per turn; when it runs out the agent must report what it has. */
