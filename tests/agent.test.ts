@@ -51,6 +51,11 @@ describe('tool approval gating', () => {
     expect(r.steps).toHaveLength(1);
   });
 
+  it('pauses for approval when a timeline base search uses an untrusted macro', async () => {
+    const r = await agentWith(modelCalling('splunk_timeline', { spl: 'index=app `sneaky`' })).generate({ prompt: 'x' });
+    expect(approvalRequests(r)).toHaveLength(1);
+  });
+
   it('pauses for approval on untrusted macros', async () => {
     const r = await agentWith(modelCalling('splunk_search', { spl: 'index=app | `sneaky`' })).generate({ prompt: 'x' });
     expect(approvalRequests(r)).toHaveLength(1);

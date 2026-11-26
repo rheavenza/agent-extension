@@ -17,6 +17,7 @@ export async function snowFetchInPage(
   path: string,
   method: string,
   body: string | null,
+  accept: string | null = null,
 ): Promise<InPageResponse> {
   const w = window as unknown as Record<string, any>;
   let token: string | undefined = typeof w.g_ck === 'string' ? w.g_ck : undefined;
@@ -42,7 +43,8 @@ export async function snowFetchInPage(
       }
     }
   }
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  // Attachment downloads (/file) must accept any type; everything else is JSON.
+  const headers: Record<string, string> = { Accept: accept ?? 'application/json' };
   if (body) headers['Content-Type'] = 'application/json';
   if (token) headers['X-UserToken'] = token;
   const res = await fetch(path, { method, headers, body: body ?? undefined, credentials: 'same-origin' });
