@@ -5,7 +5,7 @@ describe('buildSystemPrompt', () => {
   const p = buildSystemPrompt('', new Date('2026-11-25T12:00:00Z'));
 
   it('covers the investigation loop, search rules, untrusted data and the report', () => {
-    for (const s of ['suggested_window', 'change_request', 'hypothesis', 'tstats', 'TERM(', 'at most 2', '<untrusted source=', 'Draft work note', 'Confidence'.toLowerCase()]) {
+    for (const s of ['suggested_window', 'servicenow_related', 'servicenow_get_ci', 'splunk_timeline', 'splunk_field_summary', 'splunk_validate_spl', 'hypothesis', 'tstats', 'TERM(', 'at most 2', '<untrusted source=', 'Draft work note', 'Confidence'.toLowerCase()]) {
       expect(p.toLowerCase()).toContain(s.toLowerCase());
     }
     expect(p).toContain("Today's date: 2026-11-25");

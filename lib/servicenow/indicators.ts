@@ -156,7 +156,8 @@ export function extractIndicators(
 
 const UTC_RAW = /\[UTC (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/;
 
-function rawUtc(v: string | undefined): number | null {
+/** Epoch ms of a compacted ServiceNow date ("display [UTC raw]", or a bare raw value), or null. */
+export function rawUtc(v: string | undefined): number | null {
   const m = v ? UTC_RAW.exec(v) : null;
   if (!m) {
     // A field with no display/raw split (e.g. the user's timezone is UTC) is the raw value itself.

@@ -27,6 +27,15 @@ const LABELS: Record<string, string> = {
   splunk_search: 'Splunk search',
   splunk_metadata: 'Splunk metadata',
   splunk_get_results: 'Splunk results',
+  splunk_field_summary: 'Splunk field summary',
+  splunk_timeline: 'Splunk timeline',
+  splunk_validate_spl: 'Check SPL',
+  splunk_knowledge: 'Splunk knowledge',
+  servicenow_get_ci: 'Look up CI',
+  servicenow_related: 'Related changes & incidents',
+  servicenow_kb_search: 'Search knowledge base',
+  servicenow_attachments: 'List attachments',
+  servicenow_read_attachment: 'Read attachment',
 };
 
 function summary(name: string, input: any): string {
@@ -38,6 +47,15 @@ function summary(name: string, input: any): string {
   if (name === 'splunk_metadata') return `${input.kind}${input.index ? ` (${input.index})` : ''}`;
   if (name === 'read_page_text') return `tab ${input.tabId}`;
   if (name === 'splunk_get_results') return `${input.sid} @${input.offset ?? 0}`;
+  if (name === 'splunk_field_summary') return input.sid ?? '';
+  if (name === 'splunk_timeline') return `${input.spl ?? ''}${input.splitBy ? ` by ${input.splitBy}` : ''}`;
+  if (name === 'splunk_validate_spl') return input.spl ?? '';
+  if (name === 'splunk_knowledge') return `${input.kind}${input.filter ? `: ${input.filter}` : ''}`;
+  if (name === 'servicenow_get_ci') return input.ci ?? '';
+  if (name === 'servicenow_related') return input.number ?? input.ci ?? '';
+  if (name === 'servicenow_kb_search') return input.text ?? '';
+  if (name === 'servicenow_attachments') return `${input.table ?? ''} ${input.sys_id ?? ''}`.trim();
+  if (name === 'servicenow_read_attachment') return input.contains?.length ? `grep ${input.contains.join(', ')}` : (input.sys_id ?? '');
   return '';
 }
 

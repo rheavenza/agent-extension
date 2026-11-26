@@ -1,6 +1,14 @@
 import { splunkFetchInPage } from '../injected';
 import { runInTab } from '../tabs';
-import { compactResults, fitRowsToBudget, normalizeSpl, normalizeSplunkTime, parseSplunkUrl } from './spl';
+import { compactFieldSummary, compactKnowledge, KNOWLEDGE_ENDPOINTS, type KnowledgeKind } from './insights';
+import {
+  compactResults,
+  fitRowsToBudget,
+  normalizeSpl,
+  normalizeSplunkTime,
+  parseSplunkUrl,
+  riskySplCommands,
+} from './spl';
 
 export interface SplunkTarget {
   tabId: number;
@@ -16,7 +24,10 @@ export function splunkTargetFromTab(tab: chrome.tabs.Tab, defaultApp: string): S
 }
 
 async function call(t: SplunkTarget, path: string, method = 'GET', form?: Record<string, string>) {
-  const url = `${t.base}/splunkd/__raw/services/${path}`;
+  // servicesNS/-/-/... lists objects from every app the user can see; everything else is services/.
+  const url = path.startsWith('servicesNS/')
+    ? `${t.base}/splunkd/__raw/${path}`
+    : `${t.base}/splunkd/__raw/services/${path}`;
   const res = await runInTab(t.tabId, splunkFetchInPage, [url, method, form ?? null], 'ISOLATED');
   let json: any = null;
   try {
@@ -87,6 +98,8 @@ export async function runSearch(t: SplunkTarget, o: SearchOptions) {
     // Running jobs count against the user's concurrent-search quota. If we stop polling
     // (side panel closed, extension reloaded), let Splunk cancel the job on its own.
     auto_cancel: String(JOB_AUTO_CANCEL_SEC),
+    // Needed for the job's field summary (splunk_field_summary). Splunk Web uses the same value.
+    status_buckets: '300',
   });
   const sid: string = created.sid;
   if (!sid) throw new Error('Splunk did not return a search id (sid)');
@@ -202,6 +215,59 @@ export async function getResults(
     fields: fieldNames(r.fields),
     messages: (r.messages ?? []).map((m: any) => `${m.type}: ${m.text}`),
     results,
+  };
+}
+
+/** Top values per field across all events the job scanned, without pulling the events. */
+export async function getFieldSummary(t: SplunkTarget, o: { sid: string; fields?: string[]; topN?: number }) {
+  const topN = o.topN ?? 5;
+  const f = (o.fields ?? []).map((x) => `&f=${encodeURIComponent(x)}`).join('');
+  const raw = await call(
+    t,
+    `search/jobs/${encodeURIComponent(o.sid)}/summary?output_mode=json&top_count=${topN}&min_freq=0${f}`,
+  );
+  return { sid: o.sid, ...compactFieldSummary(raw, { fields: o.fields, topN }) };
+}
+
+/**
+ * Parse SPL without running it. parse_only=true keeps Splunk from running subsearches while
+ * parsing, so this is safe for any SPL. The parsed command list has macros expanded, so it also
+ * shows what a macro really does.
+ */
+export async function validateSpl(t: SplunkTarget, spl: string) {
+  const search = normalizeSpl(spl);
+  let raw: any;
+  try {
+    raw = await call(t, `search/parser?output_mode=json&parse_only=true&q=${encodeURIComponent(search)}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/HTTP 400/.test(msg)) return { valid: false, error: msg.replace(/^Splunk GET search\/parser → HTTP 400: /, '') };
+    throw e;
+  }
+  const commands: any[] = Array.isArray(raw?.commands) ? raw.commands : [];
+  const expanded = commands.map((c) => `${c.command ?? ''} ${c.rawargs ?? ''}`.trim()).join(' | ');
+  const names = commands.map((c) => String(c.command ?? '').toLowerCase()).filter(Boolean);
+  const risky = [...new Set([...riskySplCommands(expanded), ...riskySplCommands(names.map((n) => `| ${n}`).join(' '))])];
+  return {
+    valid: true,
+    commands: names,
+    expanded: expanded.length > 4000 ? expanded.slice(0, 4000) + ' …[truncated]' : expanded,
+    risky_commands_after_expansion: risky,
+  };
+}
+
+/** Saved searches, macros, eventtypes or lookups the user can see, across apps. */
+export async function listKnowledge(t: SplunkTarget, o: { kind: KnowledgeKind; filter?: string; count?: number }) {
+  const count = o.count ?? 25;
+  const filter = o.filter?.trim() ? `&search=${encodeURIComponent(o.filter.trim())}` : '';
+  const raw = await call(
+    t,
+    `servicesNS/-/-/${KNOWLEDGE_ENDPOINTS[o.kind]}?output_mode=json&count=${count}${filter}`,
+  );
+  return {
+    kind: o.kind,
+    total: Number(raw?.paging?.total ?? raw?.entry?.length ?? 0),
+    items: compactKnowledge(o.kind, raw),
   };
 }
 

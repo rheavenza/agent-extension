@@ -12,7 +12,16 @@
  */
 
 /** Tool results that can be trimmed once they are no longer recent. */
-const PRUNABLE = new Set(['splunk_search', 'splunk_get_results', 'read_page_text']);
+const PRUNABLE = new Set([
+  'splunk_search',
+  'splunk_get_results',
+  'splunk_timeline',
+  'splunk_field_summary',
+  'splunk_knowledge',
+  'read_page_text',
+  'servicenow_read_attachment',
+  'servicenow_kb_search',
+]);
 
 export interface PruneOptions {
   /** How many of the most recent prunable results to keep in full. */
@@ -29,25 +38,82 @@ const NOTE =
 
 type Json = Record<string, any>;
 
+const cut = (v: unknown, n: number) => {
+  const t = String(v ?? '');
+  return t.length > n ? t.slice(0, n) + ' …[trimmed]' : t;
+};
+
 export function summarizeToolOutput(toolName: string, value: Json, sampleRows = 3): Json {
-  if (toolName === 'read_page_text') {
-    const text = String(value.text ?? '');
-    return {
-      title: value.title,
-      url: value.url,
-      text: text.slice(0, 1000) + (text.length > 1000 ? ' …[trimmed]' : ''),
-      trimmed: true,
-      note: 'Older page read trimmed to save context. Call read_page_text again if you need the full text.',
-    };
+  const trimmed = (rest: Json, note: string) => ({ ...rest, trimmed: true, note });
+  switch (toolName) {
+    case 'read_page_text':
+      return trimmed(
+        { title: value.title, url: value.url, text: cut(value.text, 1000) },
+        'Older page read trimmed to save context. Call read_page_text again if you need the full text.',
+      );
+    case 'servicenow_read_attachment': {
+      const { excerpt, ...meta } = value;
+      return trimmed(
+        { ...meta, excerpt: cut(excerpt, 1000) },
+        'Older attachment read trimmed to save context. Read it again, with contains, if you need more.',
+      );
+    }
+    case 'servicenow_kb_search':
+      return trimmed(
+        { ...value, articles: (value.articles ?? []).map((a: Json) => ({ ...a, excerpt: cut(a.excerpt, 200) })) },
+        'Older search trimmed to save context; article links are kept.',
+      );
+    case 'splunk_timeline': {
+      const { series, ...analysis } = value;
+      return trimmed(analysis, 'Older timeline trimmed to save context: the bucket series was dropped, the analysis is kept.');
+    }
+    case 'splunk_field_summary': {
+      const fields = Object.entries<Json>(value.fields ?? {})
+        .slice(0, 10)
+        .map(([k, f]) => [k, { ...f, top: (f.top ?? []).slice(0, 2) }]);
+      return trimmed(
+        { ...value, fields: Object.fromEntries(fields) },
+        'Older field summary trimmed to the first 10 fields and their top 2 values. Call splunk_field_summary again for more.',
+      );
+    }
+    case 'splunk_knowledge':
+      return trimmed(
+        {
+          ...value,
+          items: (value.items ?? []).map((i: Json) => ({
+            ...i,
+            ...(i.search != null ? { search: cut(i.search, 150) } : {}),
+            ...(i.definition != null ? { definition: cut(i.definition, 150) } : {}),
+          })),
+        },
+        'Older knowledge list trimmed: definitions were shortened. List again for full definitions.',
+      );
+    default: {
+      const { results, ...meta } = value;
+      return trimmed({ ...meta, results: Array.isArray(results) ? results.slice(0, sampleRows) : undefined }, NOTE);
+    }
   }
-  const { results, ...meta } = value;
-  return {
-    ...meta,
-    results: Array.isArray(results) ? results.slice(0, sampleRows) : undefined,
-    trimmed: true,
-    note: NOTE,
-  };
 }
+
+/** Tool results that carry text from tickets, pages, logs or Splunk/CMDB objects others wrote. */
+const UNTRUSTED = new Set([
+  'read_servicenow_ticket',
+  'servicenow_query',
+  'servicenow_get_ci',
+  'servicenow_related',
+  'servicenow_kb_search',
+  'servicenow_attachments',
+  'servicenow_read_attachment',
+  'read_page_text',
+  'splunk_search',
+  'splunk_get_results',
+  'splunk_timeline',
+  'splunk_field_summary',
+  'splunk_validate_spl',
+  'splunk_knowledge',
+  'splunk_metadata',
+  'list_tabs',
+]);
 
 const TAG = /<\s*\/?\s*untrusted\b/gi;
 const WRAPPED = /^<untrusted source="([\w-]+)">\n([\s\S]*)\n<\/untrusted>$/;
@@ -114,16 +180,6 @@ export function pruneToolResults<M>(messages: M[], opts: PruneOptions = {}): M[]
   return out ?? messages;
 }
 
-/** Tool results that carry text from tickets, pages or logs, which anyone can write. */
-const UNTRUSTED = new Set([
-  'read_servicenow_ticket',
-  'servicenow_query',
-  'read_page_text',
-  'splunk_search',
-  'splunk_get_results',
-  'splunk_metadata',
-  'list_tabs',
-]);
 
 /**
  * Wraps data-bearing tool results in <untrusted source="..."> ... </untrusted> as text, so the

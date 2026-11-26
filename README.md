@@ -27,9 +27,17 @@ For development, `pnpm dev` launches Chromium with hot reload (it needs Chrome o
 | `list_tabs` | Lists the open ServiceNow and Splunk tabs plus the tab you're looking at. Other tabs are only counted, so their titles and URLs never reach the model provider. | – |
 | `read_servicenow_ticket` | Reads the record open in the ServiceNow tab, or one you name by number, via `/api/now/table` with your session token (`g_ck`). Includes the journal, the indicators found in the text (hosts, IPs, IDs, error codes, exceptions) and a suggested Splunk time window, both worked out in code. | – |
 | `servicenow_query` | Runs an encoded query, e.g. tickets you opened | – |
+| `servicenow_get_ci` | Looks up a CI in the CMDB from its own class table (hostnames, FQDN, IP, OS, support group) with its relationships | – |
+| `servicenow_related` | Changes on the same CI that overlap the incident window (minutes before the incident, in progress or not), other incidents on the CI, and open problems. Filtered by raw UTC times in code. | – |
+| `servicenow_kb_search` | Searches published knowledge articles (full-text, falling back to title words) | – |
+| `servicenow_attachments` / `servicenow_read_attachment` | Lists a record's attachments and reads text ones: start and end of the file, or only lines containing given terms, with line numbers | – |
 | `servicenow_add_note` | Adds a work note or comment | **always** |
 | `splunk_search` | Runs SPL through Splunk Web's `splunkd/__raw` proxy with your session and CSRF cookie, polls the job, and returns capped results. It then shows the job (`?sid=`) in a Splunk tab the agent opens in the background and reuses, so you see the same search. Your own Splunk tabs are never navigated. | only for `delete`, `collect`, `outputlookup`, `sendemail`, `map`, `rest`, `script`, `savedsearch`, …, and for macros not listed under **Settings → Trusted Splunk macros** |
 | `splunk_get_results` | Reads more rows from a job by sid (paging, specific fields) without running the search again | – |
+| `splunk_field_summary` | Top values per field across all events a job scanned, from the job's summary, without pulling the events | – |
+| `splunk_timeline` | Counts over time for a base search, with the peak, first and last event and spike onset worked out in code | same as `splunk_search` |
+| `splunk_validate_spl` | Parses SPL without running it (`parse_only=true`) and shows the pipeline with macros expanded | – |
+| `splunk_knowledge` | Lists saved searches, macros, eventtypes or lookups across apps | – |
 | `splunk_metadata` | Lists indexes, sourcetypes, hosts or sources | – |
 | `read_page_text` | Reads the visible text of any tab (shadow DOM and iframes included). Fallback when the APIs are blocked by ACLs. | – |
 

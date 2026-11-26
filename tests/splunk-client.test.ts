@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { resetAgentTab, runSearch, showJobInTab, sleep, type SplunkTarget } from '../lib/splunk/client';
+import {
+  getFieldSummary,
+  listKnowledge,
+  resetAgentTab,
+  runSearch,
+  showJobInTab,
+  sleep,
+  validateSpl,
+  type SplunkTarget,
+} from '../lib/splunk/client';
 
 const target: SplunkTarget = { tabId: 7, origin: 'https://splunk.test', base: '/en-US', app: 'search' };
 
@@ -51,6 +60,7 @@ describe('runSearch job lifecycle', () => {
     const calls = fakeSplunk({ doneAfterPolls: 1 });
     const r = await runSearch(target, { spl: 'index=a', maxResults: 10, timeoutSec: 30 });
     expect(calls[0].form?.auto_cancel).toBe('90');
+    expect(calls[0].form?.status_buckets).toBe('300');
     expect(r.partial).toBe(false);
     expect(r.finalized).toBe(false);
     expect(calls.some((c) => c.url.includes('/control'))).toBe(false);
@@ -145,5 +155,62 @@ describe('showJobInTab', () => {
     const id = await showJobInTab(target, 'https://splunk.test/x?sid=b');
     expect(id).toBe(101);
     expect(f.creates).toHaveLength(2);
+  });
+});
+
+/** Fake Splunk that answers GETs from a table of URL prefixes. */
+function fakeGet(routes: Array<[RegExp, { status?: number; body: unknown }]>) {
+  const urls: string[] = [];
+  (globalThis as any).chrome = {
+    tabs: { get: async () => ({ id: 7, status: 'complete' }) },
+    scripting: {
+      executeScript: async ({ args: [url] }: { args: [string] }) => {
+        urls.push(url);
+        const hit = routes.find(([re]) => re.test(url));
+        if (!hit) throw new Error(`unexpected ${url}`);
+        const status = hit[1].status ?? 200;
+        return [{ result: { ok: status < 400, status, text: JSON.stringify(hit[1].body), hasToken: true, url } }];
+      },
+    },
+  };
+  return urls;
+}
+
+describe('Splunk insight calls', () => {
+  it('reads the job field summary with top_count and field filters', async () => {
+    const urls = fakeGet([[/\/summary\?/, { body: { event_count: 4, fields: { host: { count: 4, distinct_count: 1, modes: [{ value: 'h', count: 4 }] } } } }]]);
+    const r = await getFieldSummary(target, { sid: 'a b', fields: ['host'], topN: 3 });
+    expect(urls[0]).toBe('/en-US/splunkd/__raw/services/search/jobs/a%20b/summary?output_mode=json&top_count=3&min_freq=0&f=host');
+    expect(r).toEqual({ sid: 'a b', event_count: 4, fields: { host: { coverage: 1, distinct: 1, top: [['h', 4]] } } });
+  });
+
+  it('parses SPL with parse_only and reports risky commands hidden in macros', async () => {
+    const urls = fakeGet([
+      [/\/search\/parser\?/, { body: { commands: [{ command: 'search', rawargs: 'index=a' }, { command: 'outputlookup', rawargs: 'x.csv' }] } }],
+    ]);
+    const r = await validateSpl(target, 'index=a | `m`');
+    expect(urls[0]).toContain('parse_only=true');
+    expect(urls[0]).toContain(`q=${encodeURIComponent('search index=a | `m`')}`);
+    expect(r).toEqual({
+      valid: true,
+      commands: ['search', 'outputlookup'],
+      expanded: 'search index=a | outputlookup x.csv',
+      risky_commands_after_expansion: ['outputlookup'],
+    });
+  });
+
+  it('returns a syntax error instead of throwing', async () => {
+    fakeGet([[/\/search\/parser\?/, { status: 400, body: { messages: [{ type: 'FATAL', text: 'Unknown search command "statz".' }] } }]]);
+    const r = await validateSpl(target, 'index=a | statz count');
+    expect(r).toMatchObject({ valid: false });
+    expect((r as any).error).toContain('Unknown search command');
+  });
+
+  it('lists knowledge objects across apps through servicesNS', async () => {
+    const urls = fakeGet([[/servicesNS\/-\/-\/saved\/searches/, { body: { paging: { total: 1 }, entry: [{ name: 'S', acl: { app: 'a' }, content: { search: 'index=a' } }] } }]]);
+    const r = await listKnowledge(target, { kind: 'saved_searches', filter: 'pay' });
+    expect(urls[0]).toBe('/en-US/splunkd/__raw/servicesNS/-/-/saved/searches?output_mode=json&count=25&search=pay');
+    expect(r.total).toBe(1);
+    expect(r.items[0]).toMatchObject({ name: 'S', search: 'index=a' });
   });
 });
